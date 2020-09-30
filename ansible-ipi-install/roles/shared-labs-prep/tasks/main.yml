@@ -10,29 +10,43 @@
     state: latest
   become: yes
 
-- name: Create temp directory for badfish
-  tempfile:
-    state: directory
-  register: badfish_tempdir
+- name: check provisioner chassis vendor
+  shell: |
+    cat /sys/class/dmi/id/chassis_vendor
+  register: chassis_vendor
+  become: yes
 
-- name: Get Badfish master branch
-  git:
-    repo: https://github.com/redhat-performance/badfish.git
-    dest: "{{ badfish_tempdir.path }}"
-    force: yes
-
-- name: Set badfish venv
+- name: set vendor fact
   set_fact:
-    badfish_venv: "{{ badfish_tempdir.path}}/.venv"
+    supermicro: true
+  when: chassis_vendor.stdout | lower == 'supermicro'
 
-- name: Create badfish venv
-  command: python3 -m venv {{ badfish_venv }} creates={{ badfish_venv }}
+- name: Setup Badfish for Dell
+  block:
+    - name: Create temp directory for badfish
+      tempfile:
+        state: directory
+      register: badfish_tempdir
 
-- name: Install badfish requirements
-  pip:
-    requirements: "{{ badfish_tempdir.path}}/requirements.txt"
-    virtualenv_command: /usr/bin/python3 -m venv
-    virtualenv: "{{ badfish_venv }}"
+    - name: Get Badfish master branch
+      git:
+        repo: https://github.com/redhat-performance/badfish.git
+        dest: "{{ badfish_tempdir.path }}"
+        force: yes
+
+    - name: Set badfish venv
+      set_fact:
+        badfish_venv: "{{ badfish_tempdir.path}}/.venv"
+
+    - name: Create badfish venv
+      command: python3 -m venv {{ badfish_venv }} creates={{ badfish_venv }}
+
+    - name: Install badfish requirements
+      pip:
+        requirements: "{{ badfish_tempdir.path}}/requirements.txt"
+        virtualenv_command: /usr/bin/python3 -m venv
+        virtualenv: "{{ badfish_venv }}"
+  when: supermicro is not defined or not supermicro
 
 - name: Clean network interfaces created by lab automation
   shell: |
@@ -114,91 +128,140 @@
     - "{{ pub_nic }}"
   become: yes
 
-- name: Power on master nodes
-  ipmi_power:
-    name: "mgmt-{{ item }}"
-    user: "{{ lab_ipmi_user }}"
-    password: "{{ lab_ipmi_password }}"
-    state: on
-  with_items: "{{ master_fqdns }}"
-  register: power_on_masters
-  until: power_on_masters is succeeded
-  retries: 3
-  delay: 30
-  tags:
-    - bootorder
+- name: Prep Dell nodes
+  block:
+    - name: Power on master nodes
+      ipmi_power:
+        name: "mgmt-{{ item }}"
+        user: "{{ lab_ipmi_user }}"
+        password: "{{ lab_ipmi_password }}"
+        state: on
+      with_items: "{{ master_fqdns }}"
+      register: power_on_masters
+      until: power_on_masters is succeeded
+      retries: 3
+      delay: 30
+      tags:
+        - bootorder
 
-- name: Power on worker nodes
-  ipmi_power:
-    name: "mgmt-{{ item }}"
-    user: "{{ lab_ipmi_user }}"
-    password: "{{ lab_ipmi_password }}"
-    state: on
-  with_items: "{{ worker_fqdns }}"
-  register: power_on_workers
-  until: power_on_workers is succeeded
-  retries: 3
-  delay: 30
-  tags:
-    - bootorder
+    - name: Power on worker nodes
+      ipmi_power:
+        name: "mgmt-{{ item }}"
+        user: "{{ lab_ipmi_user }}"
+        password: "{{ lab_ipmi_password }}"
+        state: on
+      with_items: "{{ worker_fqdns }}"
+      register: power_on_workers
+      until: power_on_workers is succeeded
+      retries: 3
+      delay: 30
+      tags:
+        - bootorder
 
-- name: Clear redfish job queues
-  shell:
-    chdir: "{{ badfish_tempdir.path }}"
-    cmd: |
-      source {{ badfish_venv }}/bin/activate
-      {{ badfish_cmd }}{{ item }} --clear-jobs --force
-  with_items:
-    - "{{ master_fqdns }}"
-    - "{{ worker_fqdns }}"
-  tags:  
-    - bootorder
-  register: jobqueue_requests
-  async: 3600
-  poll: 0
+    - name: Clear redfish job queues
+      shell:
+        chdir: "{{ badfish_tempdir.path }}"
+        cmd: |
+          source {{ badfish_venv }}/bin/activate
+          {{ badfish_cmd }}{{ item }} --clear-jobs --force
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+      tags:  
+        - bootorder
+      register: jobqueue_requests
+      async: 3600
+      poll: 0
 
-- include_tasks: 10_redfish_queue.yml
-  with_items: "{{ jobqueue_requests.results }}"
-  tags:  
-    - bootorder
+    - include_tasks: 10_redfish_queue.yml
+      with_items: "{{ jobqueue_requests.results }}"
+      tags:  
+        - bootorder
 
-- name: Wait for iDrac to be responsive (check via --check-boot)
-  shell:
-    chdir: "{{ badfish_tempdir.path }}"
-    cmd: |
-      source {{ badfish_venv }}/bin/activate
-      {{ badfish_cmd }}{{ item }} --check-boot
-  with_items:
-    - "{{ master_fqdns }}"
-    - "{{ worker_fqdns }}"
-  register: wait_for_idrac
-  until: wait_for_idrac is succeeded
-  retries: 20
-  delay: 30
-  tags:
-    - bootorder
+    - name: Wait for iDrac to be responsive (check via --check-boot)
+      shell:
+        chdir: "{{ badfish_tempdir.path }}"
+        cmd: |
+          source {{ badfish_venv }}/bin/activate
+          {{ badfish_cmd }}{{ item }} --check-boot
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+      register: wait_for_idrac
+      until: wait_for_idrac is succeeded
+      retries: 20
+      delay: 30
+      tags:
+        - bootorder
 
-- name: Set nodes to director boot order
-  shell:
-    chdir: "{{ badfish_tempdir.path }}"
-    cmd: |
-      source {{ badfish_venv }}/bin/activate
-      {{ badfish_cmd }}{{ item }} -t director
-  with_items:
-    - "{{ master_fqdns }}"
-    - "{{ worker_fqdns }}"
-  register: boot_order_requests
-  tags:
-    - bootorder
-  async: 3600
-  poll: 0
+    - name: Set nodes to director boot order
+      shell:
+        chdir: "{{ badfish_tempdir.path }}"
+        cmd: |
+          source {{ badfish_venv }}/bin/activate
+          {{ badfish_cmd }}{{ item }} -t director
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+      register: boot_order_requests
+      tags:
+        - bootorder
+      async: 3600
+      poll: 0
 
-- include_tasks: 20_boot_order.yml
-  with_items: "{{ boot_order_requests.results }}"
-  tags:  
-    - bootorder    
+    - include_tasks: 20_boot_order.yml
+      with_items: "{{ boot_order_requests.results }}"
+      tags:  
+        - bootorder    
+  when: supermicro is not defined or not supermicro
 
-#TODO: Add wait for node reboot
+- name: Prep supermicro nodes
+  block:
+    - name: Power on Supermicro master and worker nodes
+      shell: |
+        {{ ipmi_cmd  }}{{ item }} chassis power on
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"    
+
+    - name: Set Supermicro master and worker node to PXE boot
+      shell: |
+        {{ ipmi_cmd  }}{{ item }} chassis bootdev PXE options=persistent 
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"   
+
+    - name: Power cycle Supermicro master and worker nodes
+      shell: |
+        {{ ipmi_cmd  }}{{ item }} chassis power cycle
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"       
+
+    - name: wait for 120 seconds before checking for nodes
+      wait_for:
+        timeout: 120
+
+    - name: Check Supermicro master and worker node boot flag
+      shell: |
+        {{ ipmi_cmd }}{{ item }} chassis bootparam get 4
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+      register: wait_to_setoff_bootflag
+      until: "'BIOS/POST has handled boot info' not in wait_to_setoff_bootflag.stdout"
+      ignore_errors: true
+      retries: 3
+      delay: 60
+
+    - name: Set Supermicro master and worker node for one time PXE
+      shell: |
+        {{ ipmi_cmd  }}{{ item }} chassis bootdev pxe
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+
+  when: supermicro is defined and supermicro
 
 - name: Set SELinux permissive
   selinux:
