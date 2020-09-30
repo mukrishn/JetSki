@@ -26,6 +26,17 @@
   set_fact:
     run_in_container: "{{ lookup('env', 'DISABLE_PODMAN') != 'true' }}"
 
+- name: check provisioner chassis vendor
+  shell: |
+    sshpass -p {{ ansible_ssh_pass }}  ssh -o 'PreferredAuthentications=password' -o 'StrictHostKeyChecking=no' -o 'UserKnownHostsFile=/dev/null' -q root@{{ provisioner_hostname }} 'sudo cat /sys/class/dmi/id/chassis_vendor'
+  register: chassis_vendor
+  ignore_errors: true
+
+- name: set vendor fact
+  set_fact:
+    supermicro: true
+  when: chassis_vendor.stdout | lower == 'supermicro' 
+
 - name: Perform OS install if needed
   block:
     - name: Install Podman
@@ -70,63 +81,77 @@
       shell: hammer -u {{ cloud_name }} -p {{ lab_ipmi_password }} -s {{ foreman_url }} host update --name {{ provisioner_hostname }} --build 1 --operatingsystem '{{ os_install }}' --medium '{{ os_install }}' --partition-table 'ALIAS-Partition' --overwrite 1
       when: lab_name == "alias" and not run_in_container
 
-    - name: Set provisioner host to foreman boot order (in container)
+    - name: Dell boot order
       block:
-        - name: Try badfish to set Foreman style interface order
-          shell: |
-            {{ badfish_cmd_container }}{{ provisioner_hostname }} -t foreman
-      rescue:
-        # RACRESET is required if Badfish failed due to Redfish internal error
-        - name: Rescue - Reset iDRAC
-          shell: |
-            sshpass -p "{{ lab_ipmi_password }}" ssh -o StrictHostKeyChecking=no {{ lab_ipmi_user }}@mgmt-{{ provisioner_hostname }} "racadm racreset soft -f"
+        - name: Set provisioner host to foreman boot order (in container)
+          block:
+            - name: Try badfish to set Foreman style interface order
+              shell: |
+                {{ badfish_cmd_container }}{{ provisioner_hostname }} -t foreman
+          rescue:
+            # RACRESET is required if Badfish failed due to Redfish internal error
+            - name: Rescue - Reset iDRAC
+              shell: |
+                sshpass -p "{{ lab_ipmi_password }}" ssh -o StrictHostKeyChecking=no {{ lab_ipmi_user }}@mgmt-{{ provisioner_hostname }} "racadm racreset soft -f"
 
-        - name: Wait for iDrac to be responsive (check via --check-boot)
+            - name: Wait for iDrac to be responsive (check via --check-boot)
+              shell: |
+                  {{ badfish_cmd_container }}{{ provisioner_hostname }} --check-boot
+              register: wait_for_prov_idrac
+              until: wait_for_prov_idrac is succeeded
+              retries: 20
+              delay: 30
+
+            - name: Badfish rescue to set Foreman style interface order
+              shell: |
+                {{ badfish_cmd_container }}{{ provisioner_hostname }} -t foreman
+          when: run_in_container
+
+        - name: Set provisioner host to reboot (in container)
           shell: |
-              {{ badfish_cmd_container }}{{ provisioner_hostname }} --check-boot
-          register: wait_for_prov_idrac
-          until: wait_for_prov_idrac is succeeded
-          retries: 20
-          delay: 30
+            {{ badfish_cmd_container }}{{ provisioner_hostname }} --power-cycle
+          when: run_in_container
 
-        - name: Badfish rescue to set Foreman style interface order
+        - name: Set provisioner host to foreman boot order
+          block:
+            - name: Try badfish to set Foreman style interface order
+              shell: |
+                {{ badfish_cmd }}{{ provisioner_hostname }} -t foreman
+          rescue:
+            # RACRESET is required if Badfish failed due to Redfish internal error
+            - name: Rescue - Reset iDRAC
+              shell: |
+                sshpass -p "{{ lab_ipmi_password }}" ssh -o StrictHostKeyChecking=no {{ lab_ipmi_user }}@mgmt-{{ provisioner_hostname }} "racadm racreset soft -f"
+
+            - name: Wait for iDrac to be responsive (check via --check-boot)
+              shell: |
+                  {{ badfish_cmd }}{{ provisioner_hostname }} --check-boot
+              register: wait_for_prov_idrac
+              until: wait_for_prov_idrac is succeeded
+              retries: 20
+              delay: 30
+
+            - name: Badfish rescue to set Foreman style interface order
+              shell: |
+                {{ badfish_cmd }}{{ provisioner_hostname }} -t foreman
+          when: not run_in_container
+
+        - name: Set provisioner host to reboot
           shell: |
-            {{ badfish_cmd_container }}{{ provisioner_hostname }} -t foreman
-      when: run_in_container
+            {{ badfish_cmd }}{{ provisioner_hostname }} --power-cycle
+          when: not run_in_container
+      when: supermicro is not defined or not supermicro
 
-    - name: Set provisioner host to reboot (in container)
-      shell: |
-        {{ badfish_cmd_container }}{{ provisioner_hostname }} --power-cycle
-      when: run_in_container
-
-    - name: Set provisioner host to foreman boot order
+    - name: Supermicro boot order
       block:
-        - name: Try badfish to set Foreman style interface order
+        - name: Set Supermicro Provisioner to PXE
           shell: |
-            {{ badfish_cmd }}{{ provisioner_hostname }} -t foreman
-      rescue:
-        # RACRESET is required if Badfish failed due to Redfish internal error
-        - name: Rescue - Reset iDRAC
+            {{ ipmi_cmd  }}{{ item }} chassis bootdev pxe options=persistent 
+            
+        - name: Power on supermicro provisioner
           shell: |
-            sshpass -p "{{ lab_ipmi_password }}" ssh -o StrictHostKeyChecking=no {{ lab_ipmi_user }}@mgmt-{{ provisioner_hostname }} "racadm racreset soft -f"
-
-        - name: Wait for iDrac to be responsive (check via --check-boot)
-          shell: |
-              {{ badfish_cmd }}{{ provisioner_hostname }} --check-boot
-          register: wait_for_prov_idrac
-          until: wait_for_prov_idrac is succeeded
-          retries: 20
-          delay: 30
-
-        - name: Badfish rescue to set Foreman style interface order
-          shell: |
-            {{ badfish_cmd }}{{ provisioner_hostname }} -t foreman
-      when: not run_in_container
-
-    - name: Set provisioner host to reboot
-      shell: |
-        {{ badfish_cmd }}{{ provisioner_hostname }} --power-cycle
-      when: not run_in_container
+            {{ ipmi_cmd  }}{{ provisioner_hostname }} power reset
+      when: supermicro is defined and supermicro
 
     - name: wait for 420 seconds before checking for provisioner
       wait_for:
