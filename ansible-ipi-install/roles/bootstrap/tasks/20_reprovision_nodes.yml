@@ -150,7 +150,7 @@
             
         - name: Power on supermicro provisioner
           shell: |
-            {{ ipmi_cmd  }}{{ provisioner_hostname }} power reset
+            {{ ipmi_cmd  }}{{ provisioner_hostname }} power cycle
       when: supermicro is defined and supermicro
 
     - name: wait for 420 seconds before checking for provisioner
