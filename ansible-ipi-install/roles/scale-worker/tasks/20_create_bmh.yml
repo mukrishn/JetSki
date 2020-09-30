@@ -12,6 +12,7 @@
         bmc:
           address: "ipmi://{{ item.pm_addr }}:623"
           credentialsName: "worker-{{ ansible_loop.index0 + scale_worker_index | int }}-bmc-secret"
+        bootMode: legacy
         hardwareProfile: unknown
         bootMACAddress: "{{ item.prov_mac }}"
         userData:
