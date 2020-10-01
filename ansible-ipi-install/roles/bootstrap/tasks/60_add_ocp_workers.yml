@@ -10,5 +10,6 @@
     ipmi_port: 623
     provision_mac: "{{ worker_prov_macs[item | int] }}"
     hardware_profile: "unknown"
+    boot_mode: "legacy"
     poweroff: true
   with_sequence: start=0 end={{ worker_mgmts | length - 1  if worker_mgmts|length > 0  }}

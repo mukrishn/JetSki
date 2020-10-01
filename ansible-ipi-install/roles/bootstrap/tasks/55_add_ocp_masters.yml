@@ -10,6 +10,7 @@
     ipmi_port: 623
     provision_mac: "{{ master_prov_macs[item | int] }}"
     hardware_profile: "default"
+    boot_mode: "legacy"
     poweroff: true
   with_sequence: start=0 end=2
 
