@@ -215,6 +215,50 @@
         - bootorder    
   when: supermicro is not defined or not supermicro
 
+- name: Prep Supermicro nodes
+  block:
+    - name: Power on supermicro nodes
+      shell: |
+        {{ ipmi_cmd  }}{{ item }} power on
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+
+    - name: wait for few seconds before setting bootdevice
+      pause:
+        seconds: 60
+
+    - name: Set Supermicro nodes to PXE
+      shell: |
+        {{ ipmi_cmd  }}{{ item }} chassis bootdev pxe options=persistent
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+      register: set_boot
+      until: set_boot is succeeded
+      retries: 2
+      delay: 60
+
+    - name: Power cycle supermicro nodes
+      shell: |
+        {{ ipmi_cmd  }}{{ item }} power cycle
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+
+    - name: Check Supermicro master and worker nodes boot flag
+      shell: |
+        {{ ipmi_cmd }}{{ item }} chassis bootparam get 4
+      with_items:
+        - "{{ master_fqdns }}"
+        - "{{ worker_fqdns }}"
+      register: wait_to_setoff_bootflag
+      until: "'BIOS/POST has handled boot info' not in wait_to_setoff_bootflag.stdout"
+      ignore_errors: true
+      retries: 4
+      delay: 60
+  when: supermicro is defined and supermicro
+
 - name: Set SELinux permissive
   selinux:
     policy: targeted
