@@ -146,7 +146,7 @@
       block:
         - name: Set Supermicro Provisioner to PXE
           shell: |
-            {{ ipmi_cmd  }}{{ item }} chassis bootdev pxe options=persistent 
+            {{ ipmi_cmd  }}{{ provisioner_hostname }} chassis bootdev pxe options=persistent 
             
         - name: Power on supermicro provisioner
           shell: |
