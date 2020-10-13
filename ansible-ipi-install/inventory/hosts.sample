@@ -200,3 +200,6 @@ provisioner.example.com
 #   content sources for the local registry. The contents of this file
 #   will be appended to the install-config.yml file.
 # disconnected_registry_mirrors_file=/path/to/install-config-appends.json
+
+# (Optional) Change the boot mode of the OpenShift cluster nodes to legacy mode (BIOS). Default is UEFI. 
+#bootmode=legacy
