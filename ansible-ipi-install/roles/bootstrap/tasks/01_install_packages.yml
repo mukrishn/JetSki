@@ -1,0 +1,5 @@
+- name: install packages
+  package:
+    name: [ python3-dns, python3-netaddr]
+  become: true
+

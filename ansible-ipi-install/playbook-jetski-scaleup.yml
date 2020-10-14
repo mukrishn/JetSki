@@ -1,0 +1,45 @@
+---
+- name: IPI on Baremetal Installation Playbook -- Red Hat Shared Labs JetSki Edition
+  hosts: orchestration
+  roles:
+    - { role: scale-bootstrap }
+    - { role: add-provisioner }
+
+- hosts: provisioner
+  tasks:
+    - name: set facts needed for OCP deployment on the provisioning host
+      set_fact:
+        "{{ item }}": "{{ hostvars[groups['orchestration'][0]][item] }}"
+      with_items:
+        - worker_fqdns
+        - lab_ipmi_user
+        - lab_ipmi_password
+        - scale_worker_node
+        - scale_worker_count
+        - current_worker_count
+
+- hosts: provisioner
+  roles:
+    - { role: scale-node-prep }
+    - { role: scale-worker }
+
+- name: Finishing IPI on Baremetal Installation 
+  hosts: orchestration
+  tasks: 
+    - name: Writing Deployed node content to a file
+      copy:
+        dest: "{{ ocp_deployed_node_inv_path }}"
+        content: "{{ ocp_deploying_node_content | to_nice_json }}"
+      when: ocp_deploying_node_content.nodes | length > 0   
+
+    - name: Writing available non Deployed node content to a file
+      copy:
+        dest: "{{ ocp_nondeployed_node_inv_path }}"
+        content: "{{ nondeploying_worker_nodes_content | to_nice_json }}"
+      when: nondeploying_worker_nodes_content.nodes | length > 0
+
+    - name: Deleting non Deployed node content
+      file:
+        dest: "{{ ocp_nondeployed_node_inv_path }}"
+        state: absent
+      when: nondeploying_worker_nodes_content.nodes | length == 0   

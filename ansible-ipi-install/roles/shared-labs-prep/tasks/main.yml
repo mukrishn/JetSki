@@ -1,0 +1,293 @@
+---
+- name: Randomize cluster name
+  set_fact:
+    cluster: "{{ cluster }}{{ 1000 | random }}"
+  when: cluster_random | default(false) | bool
+
+- name: Install packages
+  yum:
+    name: "{{ yum_packages }}"
+    state: latest
+  become: yes
+
+- name: Install RDO Packages
+  yum:
+    name: "{{ rdo_packages }}"
+    state: latest
+    disable_gpg_check: yes
+  become: yes
+
+- name: Create temp directory for badfish
+  tempfile:
+    state: directory
+  register: badfish_tempdir
+
+- name: Get Badfish master branch
+  git:
+    repo: https://github.com/redhat-performance/badfish.git
+    dest: "{{ badfish_tempdir.path }}"
+    force: yes
+
+- name: Set badfish venv
+  set_fact:
+    badfish_venv: "{{ badfish_tempdir.path}}/.venv"
+
+- name: Create badfish venv
+  command: python3 -m venv {{ badfish_venv }} creates={{ badfish_venv }}
+
+- name: Install badfish requirements
+  pip:
+    requirements: "{{ badfish_tempdir.path}}/requirements.txt"
+    virtualenv_command: /usr/bin/python3 -m venv
+    virtualenv: "{{ badfish_venv }}"
+
+- name: Clean network interfaces created by lab automation
+  shell: |
+    /root/clean-interfaces.sh --nuke
+  become: true
+  ignore_errors: true
+
+- name: Delete {{ pub_nic }} due to modify nmcli bug
+  nmcli:
+    conn_name: "{{ pub_nic }}"
+    type: ethernet
+    state: absent
+  become: yes
+
+- name: Get baremetal bridge slave devices
+  shell: |
+    bridge link | grep baremetal | grep -v vnet | awk '{print $2}' | awk -F: '{print $1}' | uniq
+  become: yes
+  register: baremetal_slave_devices
+
+- name: Get baremetal bridge slave connections
+  shell: |
+    nmcli con show | grep {{ item }} | awk '{print $1}' | uniq
+  become: yes
+  with_items: "{{ baremetal_slave_devices.stdout_lines }}"
+  when: "{{ baremetal_slave_devices.stdout_lines }}"
+  register: baremetal_slave_connections
+
+- name: Delete baremetal bridge slaves
+  nmcli:
+    conn_name: "{{ item.stdout_lines.0 }}"
+    state: absent
+  with_items: "{{ baremetal_slave_connections.results }}"
+  when: "{{ baremetal_slave_connections }}"
+  become: yes
+
+- name: Create Bridge labeled baremetal
+  nmcli:
+    conn_name: baremetal
+    type: bridge
+    ifname: baremetal
+    autoconnect: yes
+    stp: off
+    ip4_method: manual
+    ip4: "{{ extcidrnet | next_nth_usable(1) }}/24"
+    state: present
+  become: yes
+
+#Moving the dns entry to this task because of above problem
+- name: Set Bridge DNS priority
+  shell: |
+    nmcli con mod baremetal ipv4.dns {{ extcidrnet | next_nth_usable(1) }} ipv4.dns-priority 10
+  become: yes
+
+- name: Create Bridge slave on {{ pub_nic }}
+  nmcli:
+    conn_name: "{{ pub_nic }}"
+    type: bridge-slave
+    hairpin: no
+    ifname: "{{ pub_nic }}"
+    master: baremetal
+    autoconnect: yes
+    state: present
+  become: yes
+
+- name: Set MTU
+  nmcli:
+    conn_name: "{{ pub_nic }}"
+    type: ethernet
+    mtu: "{{ 9000 if jumbo_mtu else 1500 }}"
+    state: present
+  become: true
+
+- name: Reload baremetal bridge and slave interfaces
+  shell: |
+    /usr/bin/nmcli con reload {{ item }}; /usr/bin/nmcli con up {{ item }}
+  with_items:
+    - baremetal
+    - "{{ pub_nic }}"
+  become: yes
+
+- name: Power on master nodes
+  ipmi_power:
+    name: "mgmt-{{ item }}"
+    user: "{{ lab_ipmi_user }}"
+    password: "{{ lab_ipmi_password }}"
+    state: on
+  with_items: "{{ master_fqdns }}"
+  register: power_on_masters
+  until: power_on_masters is succeeded
+  retries: 3
+  delay: 30
+  tags:
+    - bootorder
+
+- name: Power on worker nodes
+  ipmi_power:
+    name: "mgmt-{{ item }}"
+    user: "{{ lab_ipmi_user }}"
+    password: "{{ lab_ipmi_password }}"
+    state: on
+  with_items: "{{ worker_fqdns }}"
+  register: power_on_workers
+  until: power_on_workers is succeeded
+  retries: 3
+  delay: 30
+  tags:
+    - bootorder
+
+- include_tasks: 10_redfish_queue.yml
+  with_items:
+    - "{{ master_fqdns }}"
+    - "{{ worker_fqdns }}"
+  tags:  
+    - bootorder
+
+- name: Wait for iDrac to be responsive (check via --check-boot)
+  shell:
+    chdir: "{{ badfish_tempdir.path }}"
+    cmd: |
+      source {{ badfish_venv }}/bin/activate
+      {{ badfish_cmd }}{{ item }} --check-boot
+  with_items:
+    - "{{ master_fqdns }}"
+    - "{{ worker_fqdns }}"
+  register: wait_for_idrac
+  until: wait_for_idrac is succeeded
+  retries: 20
+  delay: 30
+  tags:
+    - bootorder
+
+- name: Set nodes to director boot order
+  shell:
+    chdir: "{{ badfish_tempdir.path }}"
+    cmd: |
+      source {{ badfish_venv }}/bin/activate
+      {{ badfish_cmd }}{{ item }} -t director
+  with_items:
+    - "{{ master_fqdns }}"
+    - "{{ worker_fqdns }}"
+  register: boot_order
+  until: boot_order is succeeded
+  retries: 3
+  delay: 60
+  tags:
+    - bootorder
+
+- name: Set SELinux permissive
+  selinux:
+    policy: targeted
+    state: permissive
+  become: yes
+
+- name: Stop dnsmasq service
+  systemd:
+    name: dnsmasq
+    state: stopped
+  become: yes
+
+- name: Clear dnsmasq leases
+  file:
+    path: /var/lib/dnsmasq/dnsmasq.leases
+    state: absent
+  become: yes
+
+- name: Configure dnsmasq for baremetal
+  template:
+    src: ocp4-lab.dnsmasq.conf.j2
+    dest: /etc/dnsmasq.d/ocp4-lab.conf
+    mode: 0640
+  become: yes
+
+#FIXME
+- name: Configure firewall
+  iptables:
+    flush: yes
+  become: yes
+
+- name: Configure NAT
+  iptables:
+    table: nat
+    chain: POSTROUTING
+    source: "{{ extcidrnet }}"
+    destination: "!{{ extcidrnet }}"
+    out_interface: "{{ lab_pub_nic }}"
+    jump: MASQUERADE
+  become: yes
+
+- name: Save iptables configuration
+  shell: |
+    /usr/sbin/iptables-save > /etc/sysconfig/iptables
+  become: yes
+
+- name: Enable and start dnsmasq service
+  systemd:
+    name: dnsmasq
+    state: started
+    enabled: yes
+  become: yes
+
+- name: Create fake root
+  block:
+    - name: Set fake root directory path
+      set_fact:
+        fake_root: "{{ playbook_dir }}/roles/installer/files/customize_filesystem/master"
+      
+    - name: Clean up any existing fake root content
+      file:
+        path: "{{ fake_root }}"
+        state: absent
+
+    - name: Set ifcfg path
+      set_fact:
+        ifcfg_path: "{{ fake_root }}/etc/sysconfig/network-scripts"
+
+    - name: Create fake root directory
+      file:
+        path: "{{ ifcfg_path }}"
+        state: directory
+        mode: 0777
+
+    - name: Create ifcfg files to disable NICs
+      template:
+        src: ocp4-lab.ifcfg-template.j2
+        dest: "{{ ifcfg_path }}/ifcfg-{{ item }}"
+        mode: 0644
+      with_items: "{{ disable_nics }}"
+  delegate_to: localhost
+
+- name: Copy the approve_csr script from the local machine to the remote server
+  copy:
+    src: ./approve_csr.bash
+    dest: "/home/{{ ansible_user }}/"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: 0755
+  become: yes
+  when: worker_count != 0
+
+- name: Approve CSRs
+  poll: 0
+  async: 20000
+  shell: "bash /home/{{ ansible_user }}/approve_csr.bash {{ worker_count }}"
+  register: approve_csr_result
+  when: worker_count != 0
+
+- name: Approve CSRs Debug
+  debug:
+    var: approve_csr_result
+  when: worker_count != 0
