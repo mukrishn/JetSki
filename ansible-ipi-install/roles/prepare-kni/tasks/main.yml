@@ -44,3 +44,8 @@
     state: present
     key:   "{{ ssh_key['content'] | b64decode }}"
   become: yes
+
+- name: Edit root bash prompt .bashrc
+  lineinfile:
+    path: "{{ ansible_user_dir }}/.bashrc"
+    line: PS1="[\u@{{ cloud_name }}-provisioner \W]\\$ "

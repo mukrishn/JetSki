@@ -332,3 +332,8 @@
   debug:
     var: approve_csr_result
   when: worker_count != 0
+
+- name: Edit kni bash prompt .bashrc
+  lineinfile:
+    path: "{{ ansible_user_dir }}/.bashrc"
+    line: PS1="[\u@{{ cloud_name }}-provisioner \W]\\$ "
