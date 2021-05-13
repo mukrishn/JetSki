@@ -63,7 +63,9 @@
       fail:
         msg: Existing User inventory - ocpinv.json is not matching with QUADS inventory for {{ cloud_name }}, please remove existing ocpinv.json if deploying a new cloud. 
       when: compare_inv | length != 0      
-  when: st.stat.exists
+  when:
+    - st.stat.exists
+    - lab_name in ['scale', 'alias']
 
 - name: create ocpinv.json file
   copy:
@@ -105,6 +107,9 @@
           ocp_node_content: |
               {% set a=ocpinv_content.pop('nodes') %}
               {{ ocpinv_content | combine({'nodes': a|difference([a[prov_index|int]])}, recursive=True) }}
+
+- set_fact:
+    provisioner_type: ""
 
 - block:
     - name: set provisioner_type
@@ -193,6 +198,8 @@
     master_fqdns: []
     worker_fqdns: []
     non_deploy_worker_fqdns: []
+    dell_nodes: []
+    supermicro_nodes: []
 
 - name: Set master FQDNs
   set_fact:

@@ -3,6 +3,7 @@
 - name: set facts needed for OCP deployment on the provisioning host
   set_fact:
      "{{ item }}": "{{ hostvars[groups['orchestration'][0]][item] }}"
+  ignore_errors: true
   with_items:
     - master_fqdns
     - master_types
@@ -19,6 +20,9 @@
     - lab_ipmi_password
     - ocp_deploying_node_content
     - provisioner_type
+    - prov_index
+    - master_mgmts
+    - worker_mgmts
 
 - name: Convert pullsecret to JSON
   set_fact:
