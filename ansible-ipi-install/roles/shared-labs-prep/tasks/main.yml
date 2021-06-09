@@ -373,7 +373,11 @@
         - "master"
       loop_control:
           loop_var: node_item
-        
+
+    - name: set worker fact
+      set_fact:
+        disable_nics: ["eno3"]
+
     - name: Copy machine config file to Disable public nic
       template:
         src: ocp4-lab.machineconfig.yml.j2
@@ -383,8 +387,6 @@
         - "worker"
       loop_control:
           loop_var: node_item
-      vars: 
-        disable_nics: ["eno3"]
 
     - name: Copy OVN hybrid manifest files 
       copy:
