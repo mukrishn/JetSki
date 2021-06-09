@@ -371,9 +371,20 @@
         mode: 0644
       with_items:
         - "master"
+      loop_control:
+          loop_var: node_item
+        
+    - name: Copy machine config file to Disable public nic
+      template:
+        src: ocp4-lab.machineconfig.yml.j2
+        dest: "{{ manifest_path }}/50-disable-lab-public-nic-{{ node_item }}.yaml"
+        mode: 0644
+      with_items:
         - "worker"
       loop_control:
           loop_var: node_item
+      vars: 
+        disable_nics: ["eno3"]
 
     - name: Copy OVN hybrid manifest files 
       copy:
