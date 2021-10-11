@@ -5,3 +5,4 @@
 
 - name: install ansible galaxy plugin
   shell: "ansible-galaxy collection install ansible.utils containers.podman"
+

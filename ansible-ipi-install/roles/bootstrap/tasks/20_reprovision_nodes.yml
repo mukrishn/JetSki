@@ -15,12 +15,14 @@
 - name: set rhel version
   set_fact:
     rhel_current_version: "{{ rhel_release.stdout.split()[-2] }}"
+
   ignore_errors: true
   when: rhel_release.stdout | length > 0
 
 - name: set os_install
   set_fact:
     os_install: "{{ (rebuild_provisioner or rhel_current_version is version(rhel_foreman_version, '<')) | ternary(true, false) }}"
+
 
 - name: Determine if containers should be used
   set_fact:

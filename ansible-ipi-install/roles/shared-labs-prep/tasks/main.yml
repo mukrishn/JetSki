@@ -166,33 +166,34 @@
     - "{{ pub_nic }}"
   become: yes
 
-- name: Power on master nodes
-  ipmi_power:
-    name: "mgmt-{{ item }}"
-    user: "{{ lab_ipmi_user }}"
-    password: "{{ lab_ipmi_password }}"
-    state: on
-  with_items: "{{ master_fqdns }}"
-  register: power_on_masters
-  until: power_on_masters is succeeded
-  retries: 3
-  delay: 30
-  tags:
-    - bootorder
+- block:
+    - name: Power on master nodes
+      ipmi_power:
+        name: "mgmt-{{ item }}"
+        user: "{{ lab_ipmi_user }}"
+        password: "{{ lab_ipmi_password }}"
+        state: on
+      with_items: "{{ master_fqdns }}"
+      register: power_on_masters
+      until: power_on_masters is succeeded
+      retries: 3
+      delay: 30
 
-- name: Power on worker nodes
-  ipmi_power:
-    name: "mgmt-{{ item }}"
-    user: "{{ lab_ipmi_user }}"
-    password: "{{ lab_ipmi_password }}"
-    state: on
-  with_items: "{{ worker_fqdns }}"
-  register: power_on_workers
-  until: power_on_workers is succeeded
-  retries: 3
-  delay: 30
+    - name: Power on worker nodes
+      ipmi_power:
+        name: "mgmt-{{ item }}"
+        user: "{{ lab_ipmi_user }}"
+        password: "{{ lab_ipmi_password }}"
+        state: on
+      with_items: "{{ worker_fqdns }}"
+      register: power_on_workers
+      until: power_on_workers is succeeded
+      retries: 3
+      delay: 30
   tags:
     - bootorder
+  when:
+    - ( supermicro_nodes | length > 0 ) or ( dell_nodes | length > 0 )
 
 - name: Dell Boot Order tasks (Dell)
   block:
@@ -252,7 +253,44 @@
   when: supermicro_nodes | length > 0
   tags:
     - bootorder
-  
+
+- block:
+   - name: Power on master nodes
+     ipmi_power:
+       name: "{{ item }}"
+       user: "{{ lab_ipmi_user }}"
+       password: "{{ lab_ipmi_password }}"
+       state: on
+     with_items: "{{ master_mgmts }}"
+     register: power_on_masters
+     until: power_on_masters is succeeded
+     retries: 3
+     delay: 30
+
+   - name: Power on worker nodes
+     ipmi_power:
+       name: "{{ item }}"
+       user: "{{ lab_ipmi_user }}"
+       password: "{{ lab_ipmi_password }}"
+       state: on
+     with_items: "{{ worker_mgmts }}"
+     register: power_on_workers
+     until: power_on_workers is succeeded
+     retries: 3
+     delay: 30
+
+   - name: Boot order for legacy mode
+     shell: ipmitool -I lanplus -H {{ item }} -U {{ lab_ipmi_user }} -P {{ lab_ipmi_password }} chassis bootdev pxe options=persistent
+     with_items:
+       - "{{ master_mgmts }}"
+       - "{{ worker_mgmts }}"
+  when:
+    - supermicro_nodes | length == 0
+    - dell_nodes | length == 0
+  tags:
+    - bootorder
+
+
 - name: Set SELinux permissive
   selinux:
     policy: targeted
@@ -334,6 +372,19 @@
         mode: 0644
       with_items:
         - "master"
+      loop_control:
+          loop_var: node_item
+
+    - name: set worker fact
+      set_fact:
+        disable_nics: ["eno3"]
+
+    - name: Copy machine config file to Disable public nic
+      template:
+        src: ocp4-lab.machineconfig.yml.j2
+        dest: "{{ manifest_path }}/50-disable-lab-public-nic-{{ node_item }}.yaml"
+        mode: 0644
+      with_items:
         - "worker"
       loop_control:
           loop_var: node_item
@@ -369,7 +420,6 @@
         - "ocp4-lab.machineconfig.yml.j2"
       when:
         - sctp | bool
-
   delegate_to: localhost
 
 - name: Copy the approve_csr script from the local machine to the remote server

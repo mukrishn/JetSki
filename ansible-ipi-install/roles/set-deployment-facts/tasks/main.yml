@@ -21,6 +21,8 @@
     - nondeploying_worker_nodes_content
     - provisioner_type
     - prov_index
+    - master_mgmts
+    - worker_mgmts
 
 - name: Convert pullsecret to JSON
   set_fact:

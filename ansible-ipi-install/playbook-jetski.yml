@@ -66,3 +66,4 @@
       with_items:
         - "kubeconfig"
         - "kubeadmin-password"
+

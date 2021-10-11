@@ -100,6 +100,8 @@ The tree structure is shown below:
 ├── inventory
 │   ├── jetski
 │   │   └── hosts
+│   ├── shared_labs
+│   │   └── hosts
 │   └── upstream
 │       └── hosts
 ├── OWNERS
@@ -580,6 +582,7 @@ $ ansible-playbook -i inventory/jetski/hosts playbook-jetski.yml
 ## Verifying Installation
 
 Once the playbook has successfully completed, verify that your environment is up and running. 
+
 
 1. Log into the provisioner node (typically the first node in you lab assignment)
 

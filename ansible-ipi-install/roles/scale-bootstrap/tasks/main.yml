@@ -73,6 +73,7 @@
     content: "{{ ocpinv_content | to_nice_json }}"
   when: not st.stat.exists
   
+
 - name: read inv env file
   slurp:
     src: "{{ ocpinv_file }}"
@@ -110,6 +111,7 @@
     tasks_from: main.yml
 
 - include_tasks: 10_load_old_inv.yml
+
 
 - name: Set default deployed worker count
   set_fact:
