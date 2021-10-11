@@ -28,6 +28,15 @@ dir="{{ ansible_user_dir }}/clusterconfigs"
 # Provide the webserver URL as shown below if using fully disconnected
 #webserver_url=http://example.com:<port>
 
+# (Optional) Provisioning IP Network and dhcp range (default value)
+# If defined, make sure to update 'prov_ip' with a valid IP outside of your 'prov_dhcp_range' and update all other places like 'no_proxy_list'
+# prov_network=172.22.0.0/21
+prov_dhcp_range="172.22.0.10,172.22.7.254"
+
+# Provisioning IP address (default value)
+prov_ip=172.22.0.3
+
+
 # Provisioning IP address (default value)
 prov_ip=172.22.0.3
 
@@ -100,6 +109,12 @@ redfish_inspection=false
 # This variable is valid only if network_type=OVNKubernetes
 # By default this is disabled and set to false. Set ovn_hybird_plugin to true to use BigIP ingress in a cluster.
 ovn_hybird_plugin=true
+
+# (Optional) Enable local gateway mode with OVN
+ovn_local_gateway=true
+
+# (Optional) Enable SCTP in the cluster
+sctp=false
 
 ######################################
 # Vars regarding install-config.yaml #

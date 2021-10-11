@@ -7,6 +7,7 @@ filters:
     approvers:
       - rlopez133
       - iranzo
+      - directedsoul1
 
   "^documentation/.*":
     labels:
@@ -14,8 +15,7 @@ filters:
     reviewers:
       - johnwilkins
     approvers:
-      - rlopez133
-      - iranzo
+      - johnwilkins
 
   "^website/.*":
     labels:

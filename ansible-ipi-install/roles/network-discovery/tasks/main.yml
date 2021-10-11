@@ -55,6 +55,7 @@
     lab_pub_nics: ["eno1"]
   when: ( "'r640' in master_types" ) or ( "'r640' in worker_types" )
 
+
 - name: Set lab_pub_nics for master
   set_fact:
     lab_pub_nics: ["eno1"]
